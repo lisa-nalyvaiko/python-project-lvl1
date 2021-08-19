@@ -1,0 +1,648 @@
+WITH hits AS (select 
+  h.carrier_id , 
+  h.country , 
+  h.affiliate_id,
+  h.campaign_id,
+  h.app_source,
+  h.site_source,
+  h.publisher_id,
+  h.subpublisher_id,
+  cp.cost_per_unit,
+  h.tracker_client,
+  
+  
+  COUNT(DISTINCT h.session_uuid ) visits
+from `data_lake_prod.hits` h 
+LEFT JOIN data_lake_prod.campaigns cp ON cp.id = h.campaign_id
+where h.tracker_client_timestamp >= '2021-06-18'
+AND (url_visited LIKE '%/lp%')
+
+group by 
+  h.carrier_id , 
+  h.country , 
+  h.affiliate_id,
+  h.campaign_id,
+  h.app_source,
+  cp.cost_per_unit,
+  h.tracker_client,
+  h.site_source,
+  h.app_source,
+  h.publisher_id,
+  h.subpublisher_id
+order by visits desc
+  ),
+
+day0 as (
+  select 
+    s.carrier_id , 
+    s.country , 
+    s.affiliate_id,
+    s.campaign_id,
+    s.app_source,
+    s.tracker_client,
+    s.provider_id,
+    cam.cost_per_unit,
+    s.site_source,
+    s.publisher_id ,
+    s.subpublisher_id ,
+    'Day 0' as period,
+    '100%' as day0_retention,
+    COUNT(DISTINCT CONCAT(s.msisdn,s.tracker_uuid)) day0_subs,
+    COUNT(DISTINCT IF(s.subscription_type = 'freetrial', CONCAT(s.msisdn,s.tracker_uuid), NULL)) day0_subs_free_trial,
+    COUNT(DISTINCT IF(s.subscription_type = 'paid', CONCAT(s.msisdn,s.tracker_uuid), NULL)) day0_subs_paid,
+    COUNT(DISTINCT IF(s.subscription_type = 'zerocredit', CONCAT(s.msisdn,s.tracker_uuid), NULL)) day0_subs_zero_credit,
+    COUNT(DISTINCT IF(s.botfilter_status = 'fraud_traffic', CONCAT(s.msisdn,s.tracker_uuid), NULL)) day0_suspicious_subs,
+    CASE 
+      when G.google_cost is not null  then G.google_cost+ COUNT(DISTINCT CONCAT(s.msisdn,s.tracker_uuid))*cam.cost_per_unit 
+      ELSE COUNT(DISTINCT CONCAT(s.msisdn,s.tracker_uuid))*cam.cost_per_unit 
+    END as day0_cost ,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0)  as day0_net_revenue,
+    SAFE_DIVIDE(COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) day0_billing_rate,
+    count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day0_successful_billings_count,
+    count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day0_total_attempts_count,
+
+  from `data_lake_prod.subscriptions` s 
+  left join data_lake_prod.campaigns cam on (cam.id = s.campaign_id )
+  LEFT JOIN `data_lake_prod.subscription_attempts` sa 
+    ON sa.tracker_uuid = s.parent_tracker_uuid AND sa.msisdn = s.msisdn AND sa.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = sa.tracker_uuid AND sa.msisdn = ba.msisdn AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN `data_lake_prod.billings` b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn AND b.tracker_client_timestamp IS NOT NULL AND b.status = 'successful'
+  left join `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `ecommerce-stores-data-lake.data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN
+    `data_lake_prod.Google_campaigns_costs` G
+  ON
+    G.campaign_id = s.campaign_id
+    AND G.carrier_id = s.carrier_id
+    AND DATE(s.tracker_client_timestamp) = DATE(G.tracker_client_timestamp)
+    AND CAST(G.affiliate_id AS String) = s.affiliate_id
+  where s.tracker_client_timestamp >= '2021-06-18'
+  AND s.status = 'successful'
+  group by 
+    s.carrier_id , 
+    s.country , 
+    s.affiliate_id,
+    s.campaign_id,
+    s.app_source,
+    s.provider_id,
+    s.tracker_client,
+    cam.cost_per_unit,
+    s.site_source,
+    s.publisher_id ,
+    s.subpublisher_id ,
+    G.google_cost  
+ 
+  ),
+ 
+users AS (  
+  select 
+    s.carrier_id , 
+    s.country , 
+    s.affiliate_id,
+    s.campaign_id,
+    s.app_source,
+    s.provider_id,
+    s.tracker_client,
+    s.tracker_client_timestamp time,
+    s.msisdn,
+    s.tracker_uuid,
+    s.site_source,
+    s.publisher_id ,
+    s.subpublisher_id ,
+  from `data_lake_prod.subscriptions` s 
+  where s.tracker_client_timestamp >= '2021-06-18'
+  AND s.status = 'successful'
+),
+   
+day1 as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id ,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day1_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as day1_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day1_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as day1_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as day1_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as day1_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as day1_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp between users.time AND TIMESTAMP_ADD(users.time, INTERVAL 2 DAY) 
+    AND ra.tracker_client_timestamp  is not null
+    and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp < TIMESTAMP_ADD(users.time, INTERVAL 1 DAY)
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    users.provider_id,
+    users.tracker_client,
+    cp.cost_per_unit,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id 
+),
+day7 as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id ,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day7_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as day7_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day7_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as day7_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as day7_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as day7_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as day7_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON  ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp between users.time AND TIMESTAMP_ADD(users.time, INTERVAL 8 DAY) 
+    AND ra.tracker_client_timestamp  is not null
+     and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+     AND r.status = 'successful'
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp < TIMESTAMP_ADD(users.time, INTERVAL 7 DAY)
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id 
+),
+day30 as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id ,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day30_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as day30_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day30_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as day30_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as day30_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as day30_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as day30_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON  ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp between users.time AND TIMESTAMP_ADD(users.time, INTERVAL 31 DAY) 
+    AND ra.tracker_client_timestamp  is not null
+     and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+     AND r.status = 'successful'
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp < TIMESTAMP_ADD(users.time, INTERVAL 30 DAY)
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id
+),
+day180 as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day180_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as day180_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day180_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as day180_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as day180_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as day180_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as day180_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON  ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp between users.time AND TIMESTAMP_ADD(users.time, INTERVAL 181 DAY) 
+    AND ra.tracker_client_timestamp  is not null
+     and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+     AND r.status = 'successful'
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp < TIMESTAMP_ADD(users.time, INTERVAL 180 DAY)
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id 
+),
+day365 as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id ,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as day365_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as day365_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as day365_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as day365_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as day365_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as day365_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as day365_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON  ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp between users.time AND TIMESTAMP_ADD(users.time, INTERVAL 366 DAY) 
+    AND ra.tracker_client_timestamp  is not null
+     and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+     AND r.status = 'successful'
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp < TIMESTAMP_ADD(users.time, INTERVAL 365 DAY)
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id 
+),
+lifetime as (
+  SELECT
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id ,
+    COUNT(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)) as lifetime_charges,
+    COUNT(DISTINCT CONCAT(r.msisdn,r.tracker_uuid)) as lifetime_number_of_renewals,
+    COUNT(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid)) as lifetime_billing_attempts,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) ,0) as lifetime_net_revenue,
+    ifnull(sum((b.value*ex.how_many_euro_one_unit_buys)/(1+ bp.vat/100)*(bp.rs/100)*(1-bp.wht/100)) / COUNT(DISTINCT b.MSISDN) ,0) as lifetime_net_revenue_per_user,
+    SAFE_DIVIDE(count(DISTINCT CONCAT(b.msisdn,b.tracker_uuid)), count(DISTINCT CONCAT(ba.msisdn,ba.tracker_uuid))) as lifetime_billing_rate,
+    SAFE_DIVIDE(count(DISTINCT users.msisdn)-count(DISTINCT u.msisdn), count(DISTINCT users.msisdn)) as lifetime_retention  
+  FROM users
+  LEFT JOIN `data_lake_prod.renewal_attempts` ra 
+    ON  ra.msisdn = users.msisdn
+    AND ra.tracker_client_timestamp > users.time 
+    AND ra.tracker_client_timestamp  is not null
+     and ra.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.renewals` r 
+    ON r.parent_tracker_uuid = ra.tracker_uuid AND r.msisdn = ra.msisdn
+     AND r.tracker_client_timestamp  is not null
+     AND r.status = 'successful'
+  LEFT join `data_lake_prod.billing_attempts` ba 
+    ON ba.parent_tracker_uuid = ra.tracker_uuid AND ba.msisdn = ra.msisdn
+    AND ba.tracker_client_timestamp IS NOT NULL
+  LEFT JOIN data_lake_prod.billings b 
+    ON b.parent_tracker_uuid = ba.tracker_uuid AND b.msisdn = ba.msisdn 
+    AND b.tracker_client_timestamp is not null
+    AND b.status = 'successful'
+  LEFT JOIN data_lake_prod.unsubscriptions u 
+    ON u.parent_tracker_uuid = users.tracker_uuid AND u.msisdn = users.msisdn
+    AND u.tracker_client_timestamp > users.time
+  AND u.tracker_client_timestamp IS NOT NULL
+   and u.tracker_client_timestamp <= current_timestamp() 
+  LEFT JOIN `data_lake_prod.exchange_rates` ex on (ex.currency_code  = b.currency )
+  LEFT JOIN `data_lake_prod.billing_partnerships` bp on(bp.bp_id = b.provider_id and b.carrier_id = bp.carrier_id )
+  LEFT JOIN data_lake_prod.campaigns cp ON cp.id = users.campaign_id
+  GROUP BY
+    users.carrier_id , 
+    users.country , 
+    users.affiliate_id,
+    users.campaign_id,
+    users.app_source,
+    cp.cost_per_unit,
+    users.provider_id,
+    users.tracker_client,
+    users.site_source ,
+    users.publisher_id ,
+    users.subpublisher_id 
+)
+
+SELECT
+  COALESCE(hits.carrier_id, day0.carrier_id) carrier_id,
+  car.name carrier_name,
+  COALESCE(hits.country, day0.country) country,
+  co.country_name,
+  co.region_name,
+  COALESCE(hits.affiliate_id, day0.affiliate_id) affiliate_id,
+  aff.name as sources,
+  COALESCE(hits.campaign_id, day0.campaign_id) campaign_id,
+  camp.name as campaign_name,
+  COALESCE(hits.app_source, day0.app_source) app_source,
+  COALESCE(hits.cost_per_unit, day0.cost_per_unit) cost_per_unit,
+  COALESCE(hits.tracker_client, day0.tracker_client) tracker_client,
+  st.description as store_name,
+  COALESCE(day0.provider_id, day1.provider_id) provider_id,
+  bp.name as provider_name,
+  COALESCE(hits.site_source, day0.site_source) site_source,
+  COALESCE(hits.publisher_id, day0.publisher_id) publisher_id,
+  COALESCE(hits.subpublisher_id, day0.subpublisher_id) subpublisher_id,
+  hits.visits AS day0_visits,
+  day0.day0_subs,
+  day0.day0_subs_free_trial,
+  day0.day0_subs_paid,
+  day0.day0_subs_zero_credit,
+  day0.day0_suspicious_subs,
+  day0.day0_cost,
+  day0.day0_net_revenue,
+  day0.day0_billing_rate,
+  day0.day0_successful_billings_count,
+  day0.day0_total_attempts_count,
+  day0.day0_retention,
+  day1.day1_charges,
+  day1.day1_number_of_renewals,
+  day1.day1_billing_attempts, 
+  day1.day1_net_revenue,
+  day1.day1_net_revenue_per_user,
+  day1.day1_billing_rate,
+  day1.day1_retention,
+  day7.day7_charges,
+  day7.day7_number_of_renewals,
+  day7.day7_billing_attempts, 
+  day7.day7_net_revenue,
+  day7.day7_net_revenue_per_user,
+  day7.day7_billing_rate,
+  day7.day7_retention,
+  day30.day30_charges,
+  day30.day30_number_of_renewals,
+  day30.day30_billing_attempts, 
+  day30.day30_net_revenue,
+  day30.day30_net_revenue_per_user,
+  day30.day30_billing_rate,
+  day30.day30_retention,
+  day180.day180_charges,
+  day180.day180_number_of_renewals,
+  day180.day180_billing_attempts, 
+  day180.day180_net_revenue,
+  day180.day180_net_revenue_per_user,
+  day180.day180_billing_rate,
+  day180.day180_retention,
+  day365.day365_charges,
+  day365.day365_number_of_renewals,
+  day365.day365_billing_attempts, 
+  day365.day365_net_revenue,
+  day365.day365_net_revenue_per_user,
+  day365.day365_billing_rate,
+  day365.day365_retention,
+  lifetime.lifetime_charges,
+  lifetime.lifetime_number_of_renewals,
+  lifetime.lifetime_billing_attempts, 
+  lifetime.lifetime_net_revenue,
+  lifetime.lifetime_net_revenue_per_user,
+  lifetime.lifetime_billing_rate,
+  lifetime.lifetime_retention
+  
+FROM hits
+FULL OUTER JOIN day0
+  ON day0.carrier_id = hits.carrier_id
+  AND day0.country = hits.country
+  AND day0.affiliate_id = hits.affiliate_id
+  AND day0.campaign_id = hits.campaign_id
+  AND day0.app_source = hits.app_source
+  AND day0.cost_per_unit = hits.cost_per_unit
+  AND day0.site_source   = hits.site_source 
+  AND day0.publisher_id  = hits.publisher_id
+  AND day0.subpublisher_id  = hits.subpublisher_id
+  AND day0.tracker_client   = hits.tracker_client
+LEFT JOIN day1
+  ON day0.carrier_id = day1.carrier_id
+  AND day0.country = day1.country
+  AND day0.affiliate_id = day1.affiliate_id
+  AND day0.campaign_id = day1.campaign_id
+  AND day0.app_source = day1.app_source
+  AND day0.cost_per_unit = day1.cost_per_unit
+  AND day0.tracker_client  = day1.tracker_client
+  AND day0.site_source   = day1.site_source 
+  AND day0.publisher_id  = day1.publisher_id
+  AND day0.subpublisher_id  = day1.subpublisher_id
+  AND day0.provider_id   = day1.provider_id 
+LEFT JOIN day7
+  ON day0.carrier_id = day7.carrier_id
+  AND day0.country = day7.country
+  AND day0.affiliate_id = day7.affiliate_id
+  AND day0.campaign_id = day7.campaign_id
+  AND day0.app_source = day7.app_source
+  AND day0.cost_per_unit = day7.cost_per_unit
+  AND day0.tracker_client  = day7.tracker_client
+  AND day0.site_source   = day7.site_source 
+  AND day0.publisher_id  = day7.publisher_id
+  AND day0.subpublisher_id  = day7.subpublisher_id
+  AND day0.provider_id   = day7.provider_id 
+LEFT JOIN day30
+  ON day0.carrier_id = day30.carrier_id
+  AND day0.country = day30.country
+  AND day0.affiliate_id = day30.affiliate_id
+  AND day0.campaign_id = day30.campaign_id
+  AND day0.app_source = day30.app_source
+  AND day0.cost_per_unit = day30.cost_per_unit
+  AND day0.tracker_client  = day30.tracker_client
+  AND day0.site_source   = day30.site_source 
+  AND day0.publisher_id  = day30.publisher_id
+  AND day0.subpublisher_id  = day30.subpublisher_id
+  AND day0.provider_id   = day30.provider_id 
+LEFT JOIN day180
+  ON day0.carrier_id = day180.carrier_id
+  AND day0.country = day180.country
+  AND day0.affiliate_id = day180.affiliate_id
+  AND day0.campaign_id = day180.campaign_id
+  AND day0.app_source = day180.app_source
+  AND day0.cost_per_unit = day180.cost_per_unit
+  AND day0.tracker_client  = day180.tracker_client
+  AND day0.site_source   = day180.site_source 
+  AND day0.publisher_id  = day180.publisher_id
+  AND day0.subpublisher_id  = day180.subpublisher_id
+  AND day0.provider_id   = day180.provider_id 
+LEFT JOIN day365
+  ON day0.carrier_id = day365.carrier_id
+  AND day0.country = day365.country
+  AND day0.affiliate_id = day365.affiliate_id
+  AND day0.campaign_id = day365.campaign_id
+  AND day0.app_source = day365.app_source
+  AND day0.cost_per_unit = day365.cost_per_unit
+  AND day0.tracker_client  = day365.tracker_client
+  AND day0.site_source   = day365.site_source 
+  AND day0.publisher_id  = day365.publisher_id
+  AND day0.subpublisher_id  = day365.subpublisher_id
+  AND day0.provider_id   = day365.provider_id 
+LEFT JOIN lifetime
+  ON day0.carrier_id = lifetime.carrier_id
+  AND day0.country = lifetime.country
+  AND day0.affiliate_id = lifetime.affiliate_id
+  AND day0.campaign_id = lifetime.campaign_id
+  AND day0.app_source = lifetime.app_source
+  AND day0.cost_per_unit = lifetime.cost_per_unit
+   AND day0.tracker_client  = lifetime.tracker_client
+  AND day0.site_source   = lifetime.site_source 
+  AND day0.publisher_id  = lifetime.publisher_id
+  AND day0.subpublisher_id  = lifetime.subpublisher_id
+  AND day0.provider_id   = lifetime.provider_id 
+--join with tables for getting the names 
+LEFT JOIN `data_lake_prod.carriers` car ON car.id =  COALESCE(hits.carrier_id, day0.carrier_id)   
+LEFT JOIN `data_lake_prod.countires_with_continents`  co ON co.iso_code = COALESCE(hits.country, day0.country) 
+LEFT JOIN  `data_lake_prod.affiliates` aff ON aff.id = COALESCE(hits.affiliate_id, day0.affiliate_id)
+LEFT JOIN `data_lake_prod.campaigns` camp ON camp.id  =  COALESCE(hits.campaign_id, day0.campaign_id) 
+LEFT JOIN `data_lake_prod.billing_providers` bp ON bp.id = COALESCE(day0.provider_id, day1.provider_id)
+LEFT JOIN `data_lake_prod.stores` st ON st.value =   COALESCE(hits.tracker_client, day0.tracker_client) 
+ /* 
+  SELECT COUNT(*) FROM day0
+  UNION ALL
+  SELECT COUNT(*) FROM day1
+  UNION ALL
+  SELECT COUNT(*) FROM day7
+ */
+  /*
+  s1 r1 ba1 -  u1 ex1 bp1 cp1
+  s1 r1 ba2 -  u1 ex1 bp1 cp1
+  s1 r1 ba3 b1 u1 ex1 bp1 cp1
+  
+  s1 r2??
+  
+  s2
+  s3
+  */
