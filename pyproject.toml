@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "hexlet-code"
-version = "0.1.0"
+name = "hexlet-project-lnalyvaiko"
+version = "0.1.1"
 description = ""
 authors = ["Lisa Nalyvaiko <y.nalyvaiko@gmail.com>"]
 packages = [
