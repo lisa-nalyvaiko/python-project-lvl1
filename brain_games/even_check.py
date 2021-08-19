@@ -26,14 +26,12 @@ def even_number():
                 tries += 1
                 continue
             else:
-                print("'no' is wrong answer ;(. " \
-                      + f"Correct answer was 'yes'. Let's try again, {name}!")
+                print(f"'no' is wrong answer ;(. Correct answer was 'yes'. Let's try again, {name}!")
                 break
         else:
             # print('number is odd')
             if answer.lower() == 'yes':
-                print("'yes' is wrong answer ;(. " \
-                      + f"Correct answer was 'no'. Let's try again, {name}!")
+                print(f"'yes' is wrong answer ;(. Correct answer was 'no'. Let's try again, {name}!")
                 break
             else:
                 print('Correct!')
