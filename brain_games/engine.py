@@ -8,10 +8,9 @@ def run_game(game):
     print('Welcome to the Brain Games!')
     name = prompt.string('May I have your name? ')
     print(f'Welcome,{name}!')
-
+    print(game.INTRO)
     number_of_rounds = 3
     counter = 0
-    print(game.INTRO)
     while counter < number_of_rounds:
         question, result = game.game_question()
         print(f'Question: {question}')
