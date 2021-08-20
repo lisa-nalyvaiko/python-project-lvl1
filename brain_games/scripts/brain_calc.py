@@ -6,11 +6,7 @@ from brain_games.games.calc import calc_question
 
 
 def main():
-    """Greets user and runs "brain calc" game.
-
-    Returns:
-        string and user name prompt.
-    """
+    """Greets user and runs "brain calc" game."""
     return run_game(calc_question)
 
 

@@ -6,11 +6,7 @@ from brain_games.games.even_check import game_question
 
 
 def main():
-    """Greets user and runs "brain even" game.
-
-    Returns:
-        string and user name prompt.
-    """
+    """Greets user and runs "brain even" game."""
     return run_game(game_question)
 
 
