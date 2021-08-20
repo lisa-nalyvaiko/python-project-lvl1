@@ -3,6 +3,18 @@ import prompt
 import random
 
 
+def game_question():
+    """Returns generated number and correct answer"""
+    number = random.randint(1, 100)
+    result = 'yes' if is_even(number) else 'no'
+    return number, result
+
+
+def is_even(number):
+    """Returns whether generated number is even"""
+    return number % 2 == 0
+
+
 def even_number():
     """Prompts user to guess the number.
 
@@ -13,32 +25,17 @@ def even_number():
     name = prompt.string('May I have your name? ')
     print(f'Welcome,{name}!')
     print('Answer "yes" if the number is even, otherwise answer "no".')
-    wrong = f"'no' is wrong answer ;(. Correct answer was 'yes'.\nLet's try again, {name}!"
-    wrong_odd = f"'yes' is wrong answer ;(. Correct answer was 'no'.\nLet's try again, {name}!"
-    right = 'Correct!'
-    win = f'Congratulations, {name}!'
+    number_of_rounds = 3
     counter = 0
-    while counter < 3:
-        number = random.randint(1, 100)
+    while counter < number_of_rounds:
+        number, result = game_question()
         print(f'Question: {number}')
         answer = prompt.string('Your answer: ')
-        if number % 2 == 0:
-            # print('number is even')
-            if answer.lower() == 'yes':
-                print(right)
-                counter += 1
-                continue
-            else:
-                print(wrong)
-                break
+        if answer.lower() == result:
+            print('Correct!')
+            counter += 1
         else:
-            # print('number is odd')
-            if answer.lower() == 'yes':
-                print(wrong_odd)
-                break
-            else:
-                print(right)
-                counter += 1
-                continue
-    if counter == 3:
-        print(win)
+            print(f"'{answer}' is wrong answer ;(. Correct answer was '{result}'.\nLet's try again, {name}!")
+            return
+        if counter == number_of_rounds:
+            print(f'Congratulations, {name}!')
