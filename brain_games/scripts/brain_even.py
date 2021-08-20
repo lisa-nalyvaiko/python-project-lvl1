@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+"""Brain Even game"""
 
 from brain_games.engine import run_game
 from brain_games.games.even_check import game_question
 
 
 def main():
-    """Greets user and runs "check for even" game.
+    """Greets user and runs "brain even" game.
 
     Returns:
         string and user name prompt.
