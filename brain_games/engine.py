@@ -21,5 +21,4 @@ def run_game(game):
         else:
             print(f"'{answer}' is wrong answer ;(. Correct answer was '{result}'.\nLet's try again, {name}!")
             return
-        if counter == number_of_rounds:
-            print(f'Congratulations, {name}!')
+    print(f'Congratulations, {name}!')
