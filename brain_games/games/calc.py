@@ -1,8 +1,9 @@
 import random
 
+INTRO = 'What is the result of the expression?'
 
-def calc_question():
-    intro = 'What is the result of the expression?'
+
+def game_question():
     x = random.randint(1, 10)
     y = random.randint(1, 10)
     ops = random.choice('+-*')
@@ -23,4 +24,4 @@ def calc_question():
 
     res, problem = get_expression(x, y, ops)
     result = str(res)
-    return intro, problem, result
+    return problem, result

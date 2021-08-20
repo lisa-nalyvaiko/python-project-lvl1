@@ -2,12 +2,12 @@
 """Brain Calc Game"""
 
 from brain_games.engine import run_game
-from brain_games.games.calc import calc_question
+from brain_games.games import calc
 
 
 def main():
     """Greets user and runs "brain calc" game."""
-    return run_game(calc_question)
+    return run_game(calc)
 
 
 if __name__ == '__main__':

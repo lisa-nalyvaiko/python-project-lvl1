@@ -2,7 +2,7 @@
 import prompt
 
 
-def run_game(func):
+def run_game(game):
     """Returns general games intro and game logic from arg function."""
 
     print('Welcome to the Brain Games!')
@@ -11,10 +11,9 @@ def run_game(func):
 
     number_of_rounds = 3
     counter = 0
-    intro, _, _ = func()
-    print(intro)
+    print(game.INTRO)
     while counter < number_of_rounds:
-        _, question, result = func()
+        question, result = game.game_question()
         print(f'Question: {question}')
         answer = prompt.string('Your answer: ')
         if answer.lower() == result:
