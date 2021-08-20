@@ -11,15 +11,15 @@ def run_game(func):
 
     number_of_rounds = 3
     counter = 0
+    intro, _, _ = func()
+    print(intro)
     while counter < number_of_rounds:
-        intro, question, result = func()
-        if counter == 0:
-            print(intro)
+        _, question, result = func()
         print(f'Question: {question}')
         answer = prompt.string('Your answer: ')
         if answer.lower() == result:
             print('Correct!')
-            counter +=1
+            counter += 1
         else:
             print(f"'{answer}' is wrong answer ;(. Correct answer was '{result}'.\nLet's try again, {name}!")
             return
