@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 
-from brain_games.even_check import even_number
+from brain_games.engine import run_game
+from brain_games.games.even_check import game_question
 
 
 def main():
-    """Greets user and offer "check for even" game.
+    """Greets user and runs "check for even" game.
 
     Returns:
         string and user name prompt.
     """
-    return even_number()
+    return run_game(game_question)
 
 
 if __name__ == '__main__':
